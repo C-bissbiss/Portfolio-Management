@@ -760,3 +760,215 @@ axs[1, 1].grid(True)
 plt.tight_layout()
 plt.savefig("most_optimal_portfoliosB12.png")
 plt.show() 
+
+
+
+
+
+
+
+
+# B) 2. Repeat 1 but with a maximum of 3 of the 5 industries chosen
+# Chose 3 random industries (columns) from the portfolios_data DataFrame
+
+def bootstrap_sampling(data, n_iterations=1000, sample_size=60):
+   bootstrap_samples = []
+   for _ in range(n_iterations):
+       sample = data.sample(n=sample_size, replace=True)
+       bootstrap_samples.append(sample)
+   return bootstrap_samples
+
+# Perform bootstrap sampling
+bootstrap_samples = bootstrap_sampling(returns, n_iterations=1000, sample_size=60)
+# Initialize lists to store results for both short-selling scenarios
+mvp_results_with_short = []
+mvp_results_without_short = []
+tangency_results_with_short = []
+tangency_results_without_short = []
+
+# Loop through each bootstrap sample
+for sample in bootstrap_samples:
+   # Calculate expected returns and covariance matrix
+   expected_returns = sample.mean()
+   cov_matrix = sample.cov()
+   
+   # MVP with short-selling
+   mvp_weights_with_short = calculate_mvp_weights(cov_matrix, allow_short_selling=True)
+   mvp_return_with_short = np.dot(mvp_weights_with_short, expected_returns)
+   mvp_risk_with_short = np.sqrt(mvp_weights_with_short.T @ cov_matrix @ mvp_weights_with_short)
+   mvp_results_with_short.append({
+       'mvp_weights': mvp_weights_with_short,
+       'mvp_return': mvp_return_with_short,
+       'mvp_risk': mvp_risk_with_short,
+       'sharpe_ratio': (mvp_return_with_short - rf_rate) / mvp_risk_with_short
+   })
+   
+   # MVP without short-selling
+   mvp_weights_without_short = calculate_mvp_weights(cov_matrix, allow_short_selling=False)
+   mvp_return_without_short = np.dot(mvp_weights_without_short, expected_returns)
+   mvp_risk_without_short = np.sqrt(mvp_weights_without_short.T @ cov_matrix @ mvp_weights_without_short)
+   mvp_results_without_short.append({
+       'mvp_weights': mvp_weights_without_short,
+       'mvp_return': mvp_return_without_short,
+       'mvp_risk': mvp_risk_without_short,
+       'sharpe_ratio': (mvp_return_without_short - rf_rate) / mvp_risk_without_short
+   })
+   
+   # Tangency with short-selling
+   tangency_portfolio_with_short = calculate_tangency_portfolio(expected_returns, cov_matrix, rf_rate, allow_short_selling=True)
+   tangency_results_with_short.append(tangency_portfolio_with_short)
+   
+   # Tangency without short-selling
+   tangency_portfolio_without_short = calculate_tangency_portfolio(expected_returns, cov_matrix, rf_rate, allow_short_selling=False)
+   tangency_results_without_short.append(tangency_portfolio_without_short)
+
+# Convert results to DataFrames
+def results_to_dataframe(results):
+   return pd.DataFrame([{
+       'portfolio_return': result['mvp_return'] if 'mvp_return' in result else result['expected_return'],
+       'portfolio_risk': result['mvp_risk'] if 'mvp_risk' in result else result['risk'],
+       'sharpe_ratio': result['sharpe_ratio']
+   } for result in results])
+
+mvp_df_with_short = results_to_dataframe(mvp_results_with_short)
+mvp_df_without_short = results_to_dataframe(mvp_results_without_short)
+tangency_df_with_short = results_to_dataframe(tangency_results_with_short)
+tangency_df_without_short = results_to_dataframe(tangency_results_without_short)
+
+# Plotting
+plt.figure(figsize=(16, 12))
+plt.subplot(2, 2, 1)
+plt.hist(mvp_df_with_short['sharpe_ratio'], bins=30, color='blue', alpha=0.7)
+plt.title('MVP Sharpe Ratios (With Short-Selling)', fontsize=14, fontweight='bold')
+plt.xlabel('Sharpe Ratio')
+plt.ylabel('Frequency')
+
+plt.subplot(2, 2, 2)
+plt.hist(mvp_df_without_short['sharpe_ratio'], bins=30, color='red', alpha=0.7)
+plt.title('MVP Sharpe Ratios (Without Short-Selling)', fontsize=14, fontweight='bold')
+plt.xlabel('Sharpe Ratio')
+plt.ylabel('Frequency')
+
+plt.subplot(2, 2, 3)
+plt.hist(tangency_df_with_short['sharpe_ratio'], bins=30, color='green', alpha=0.7)
+plt.title('Tangency Portfolio Sharpe Ratios (With Short-Selling)', fontsize=14, fontweight='bold')
+plt.xlabel('Sharpe Ratio')
+plt.ylabel('Frequency')
+
+plt.subplot(2, 2, 4)
+plt.hist(tangency_df_without_short['sharpe_ratio'], bins=30, color='orange', alpha=0.7)
+plt.title('Tangency Portfolio Sharpe Ratios (Without Short-Selling)', fontsize=14, fontweight='bold')
+plt.xlabel('Sharpe Ratio')
+plt.ylabel('Frequency')
+
+plt.tight_layout()
+plt.savefig("bootstrap_comparisonB21.png")
+plt.show()
+
+# Print summary statistics
+print("MVP With Short-Selling Summary:")
+print(mvp_df_with_short.describe())
+print("\nMVP Without Short-Selling Summary:")
+print(mvp_df_without_short.describe())
+print("\nTangency With Short-Selling Summary:")
+print(tangency_df_with_short.describe())
+print("\nTangency Without Short-Selling Summary:")
+print(tangency_df_without_short.describe())
+
+
+# Make another bundle of graphs where it shows the MPV and tangency portfolio (as in A1, A2, A4, A5) 
+# from the bootstrap samples that is the most optimal
+# Function to find the most optimal portfolio based on Sharpe ratio
+def find_most_optimal_portfolio(results):
+    """
+    Find the most optimal portfolio based on the highest Sharpe ratio.
+    
+    Parameters:
+    - results: List of dictionaries containing portfolio information
+    
+    Returns:
+    - Dictionary with the most optimal portfolio details
+    """
+    optimal_portfolio = max(results, key=lambda x: x['sharpe_ratio'])
+    return optimal_portfolio
+
+# Find the most optimal portfolios
+most_optimal_mvp_with_short = find_most_optimal_portfolio(mvp_results_with_short)
+most_optimal_mvp_without_short = find_most_optimal_portfolio(mvp_results_without_short)
+most_optimal_tangency_with_short = find_most_optimal_portfolio(tangency_results_with_short)
+most_optimal_tangency_without_short = find_most_optimal_portfolio(tangency_results_without_short)
+# Create subplots for the most optimal portfolios
+fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+
+# Plotting the most optimal MVP with short-selling
+axs[0, 0].set_title("Most Optimal MVP (With Short Selling)", fontsize=15, fontweight='bold')
+for industry in expected_returns.index:
+    axs[0, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
+axs[0, 0].scatter(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (With Short Selling)")
+axs[0, 0].text(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_with_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_with_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
+axs[0, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
+axs[0, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
+axs[0, 0].set_xlim(0, 20)
+axs[0, 0].set_ylim(-10, 10)
+axs[0, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
+axs[0, 0].set_ylabel("Expected Return (%)", fontsize=12)
+axs[0, 0].legend()
+axs[0, 0].grid(True)
+
+# Plotting the most optimal MVP without short-selling
+axs[0, 1].set_title("Most Optimal MVP (Without Short Selling)", fontsize=15, fontweight='bold')
+for industry in expected_returns.index:
+    axs[0, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
+axs[0, 1].scatter(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (Without Short Selling)")
+axs[0, 1].text(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_without_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_without_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
+axs[0, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
+axs[0, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
+axs[0, 1].set_xlim(0, 20)
+axs[0, 1].set_ylim(-10, 10)
+axs[0, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
+axs[0, 1].set_ylabel("Expected Return (%)", fontsize=12)
+axs[0, 1].legend()
+axs[0, 1].grid(True)
+
+# Plotting the most optimal Tangency Portfolio with short-selling
+axs[1, 0].set_title("Most Optimal Tangency Portfolio (With Short Selling)", fontsize=15, fontweight='bold')
+for industry in expected_returns.index:
+    axs[1, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
+axs[1, 0].scatter(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (With Short Selling)")
+axs[1, 0].text(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, f"(r = {most_optimal_tangency_with_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_with_short['risk']*100:.2f}%)", fontsize=8, ha='right')
+axs[1, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
+axs[1, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
+axs[1, 0].set_xlim(0, 20)
+axs[1, 0].set_ylim(-10, 10)
+axs[1, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
+axs[1, 0].set_ylabel("Expected Return (%)", fontsize=12)
+axs[1, 0].legend()
+axs[1, 0].grid(True)
+
+# Plotting the most optimal Tangency Portfolio without short-selling
+axs[1, 1].set_title("Most Optimal Tangency Portfolio (Without Short Selling)", fontsize=15, fontweight='bold')
+for industry in expected_returns.index:
+    axs[1, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
+axs[1, 1].scatter(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (Without Short Selling)")
+axs[1, 1].text(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, f"(r = {most_optimal_tangency_without_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_without_short['risk']*100:.2f}%)", fontsize=8, ha='right')
+axs[1, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
+axs[1, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
+axs[1, 1].set_xlim(0, 20)
+axs[1, 1].set_ylim(-10, 10)
+axs[1, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
+axs[1, 1].set_ylabel("Expected Return (%)", fontsize=12)
+axs[1, 1].legend()
+axs[1, 1].grid(True)
+
+# Adjust layout and save the figure
+plt.tight_layout()
+plt.savefig("most_optimal_portfoliosB22.png")
+plt.show() 
+
+
+
+
+
+
+# B) 3. From all 48 industries, find up to 5 industries as a portfolio that has the highest Sharpe ratio (with short-selling and without short-selling portfolios)
+
