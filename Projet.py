@@ -7,6 +7,8 @@ from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import sympy as sp
+import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 
 # Remove future warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -964,6 +966,10 @@ axs[1, 1].grid(True)
 plt.tight_layout()
 plt.savefig("most_optimal_portfoliosB22.png")
 plt.show() 
+
+
+
+
 
 
 
