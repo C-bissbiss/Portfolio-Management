@@ -7,8 +7,8 @@ from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import sympy as sp
-import matplotlib.colors as mcolors
-import matplotlib.cm as cm
+import random
+from sklearn.covariance import LedoitWolf
 
 # Remove future warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -978,3 +978,146 @@ plt.show()
 
 # B) 3. From all 48 industries, find up to 5 industries as a portfolio that has the highest Sharpe ratio (with short-selling and without short-selling portfolios)
 
+# Retrieve 48 industry portfolios from Kenneth French website
+def retrieve_full_industry_data():
+    industry_reader = web.famafrench.FamaFrenchReader('48_Industry_Portfolios', start='2019-12', end='2024-12')
+    portfolios_data = industry_reader.read()[0]  # First table contains the return data
+    portfolios_data = portfolios_data.replace([-99.99, -999], pd.NA).dropna()
+    industry_reader.close()
+    return portfolios_data / 100  # Convert percentage to decimal
+
+# Retrieve risk-free rate
+def retrieve_risk_free_rate():
+    rf_data = web.famafrench.FamaFrenchReader('F-F_Research_Data_Factors', start='2019-12', end='2024-12')
+    rf = rf_data.read()[0]['RF'] / 100  # Convert to decimal
+    return rf.mean()
+
+# Calculate portfolio Sharpe ratio
+def sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate):
+    port_return = np.dot(weights, expected_returns)
+    port_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    return (port_return - rf_rate) / port_risk
+
+# Monte Carlo optimization
+def monte_carlo_portfolio(returns, rf_rate, n_simulations=10000, allow_short_selling=True):
+    best_sharpe = -np.inf
+    best_selection = None
+    best_weights = None
+    
+    industries = returns.columns
+    
+    for _ in range(n_simulations):
+        selected_industries = random.sample(list(industries), 5)
+        subset_returns = returns[selected_industries]
+        expected_returns = subset_returns.mean()
+        cov_matrix = subset_returns.cov()
+        n_assets = len(expected_returns)
+        
+        # Objective function (negative Sharpe ratio to minimize)
+        def neg_sharpe(weights):
+            return -sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate)
+        
+        # Constraints and bounds
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        bounds = [(-1, 1) if allow_short_selling else (0, 1) for _ in range(n_assets)]
+        
+        # Initial weights
+        initial_weights = np.ones(n_assets) / n_assets
+        
+        # Optimize
+        result = minimize(neg_sharpe, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+        
+        if result.success and -result.fun > best_sharpe:
+            best_sharpe = -result.fun
+            best_selection = selected_industries
+            best_weights = result.x
+    
+    return best_selection, best_weights, best_sharpe
+
+# Main execution
+portfolios_data = retrieve_full_industry_data()
+rf_rate = retrieve_risk_free_rate()
+
+# Find the best portfolios using Monte Carlo
+best_industries_short, best_weights_short, best_sharpe_short = monte_carlo_portfolio(portfolios_data, rf_rate, 10000, True)
+best_industries_noshort, best_weights_noshort, best_sharpe_noshort = monte_carlo_portfolio(portfolios_data, rf_rate, 10000, False)
+
+# Display results
+print("Best Portfolio With Short Selling:")
+print(dict(zip(best_industries_short, best_weights_short)))
+print(f"Sharpe Ratio: {best_sharpe_short:.4f}\n")
+
+print("Best Portfolio Without Short Selling:")
+print(dict(zip(best_industries_noshort, best_weights_noshort)))
+print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
+
+
+
+
+
+
+
+# B) 4. Implement MAXSER approach to portfolio allocation for the 48 industries
+# Apply shrinkage estimation to the covariance matrix
+def estimate_cov_matrix(returns):
+    lw = LedoitWolf()
+    return lw.fit(returns).covariance_
+
+# Calculate portfolio Sharpe ratio
+def sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate):
+    port_return = np.dot(weights, expected_returns)
+    port_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    return (port_return - rf_rate) / port_risk
+
+# Monte Carlo optimization with MAXSER
+def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_selling=True):
+    best_sharpe = -np.inf
+    best_selection = None
+    best_weights = None
+    
+    industries = returns.columns
+    
+    for _ in range(n_simulations):
+        selected_industries = random.sample(list(industries), 5)
+        subset_returns = returns[selected_industries]
+        expected_returns = subset_returns.mean()
+        cov_matrix = estimate_cov_matrix(subset_returns)
+        n_assets = len(expected_returns)
+        
+        # Objective function (negative Sharpe ratio to minimize)
+        def neg_sharpe(weights):
+            return -sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate)
+        
+        # Constraints and bounds
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        bounds = [(-1, 1) if allow_short_selling else (0, 1) for _ in range(n_assets)]
+        
+        # Initial weights
+        initial_weights = np.ones(n_assets) / n_assets
+        
+        # Optimize
+        result = minimize(neg_sharpe, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+        
+        if result.success and -result.fun > best_sharpe:
+            best_sharpe = -result.fun
+            best_selection = selected_industries
+            best_weights = result.x
+    
+    return best_selection, best_weights, best_sharpe
+
+# Main execution
+portfolios_data = retrieve_full_industry_data()
+rf_rate = retrieve_risk_free_rate()
+
+# Find the best portfolios using Monte Carlo with MAXSER
+best_industries_short, best_weights_short, best_sharpe_short = monte_carlo_maxser(portfolios_data, rf_rate, 10000, True)
+best_industries_noshort, best_weights_noshort, best_sharpe_noshort = monte_carlo_maxser(portfolios_data, rf_rate, 10000, False)
+
+# Display results
+print("Best Portfolio With Short Selling (MAXSER):")
+print(dict(zip(best_industries_short, best_weights_short)))
+print(f"Sharpe Ratio: {best_sharpe_short:.4f}\n")
+
+print("Best Portfolio Without Short Selling (MAXSER):")
+print(dict(zip(best_industries_noshort, best_weights_noshort)))
+print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
