@@ -1059,6 +1059,20 @@ print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
 
 # B) 4. Implement MAXSER approach to portfolio allocation for the 48 industries
 # Apply shrinkage estimation to the covariance matrix
+# Retrieve 48 industry portfolios from Kenneth French website
+def retrieve_full_industry_data():
+    industry_reader = web.famafrench.FamaFrenchReader('48_Industry_Portfolios', start='2014-12', end='2024-12')
+    portfolios_data = industry_reader.read()[0]  # First table contains the return data
+    portfolios_data = portfolios_data.replace([-99.99, -999], pd.NA).dropna()
+    industry_reader.close()
+    return portfolios_data / 100  # Convert percentage to decimal
+
+# Retrieve risk-free rate
+def retrieve_risk_free_rate():
+    rf_data = web.famafrench.FamaFrenchReader('F-F_Research_Data_Factors', start='2014-12', end='2024-12')
+    rf = rf_data.read()[0]['RF'] / 100  # Convert to decimal
+    return rf.mean()
+
 def estimate_cov_matrix(returns):
     lw = LedoitWolf()
     return lw.fit(returns).covariance_
