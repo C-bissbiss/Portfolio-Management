@@ -42,6 +42,8 @@ portfolios_data = portfolios_data[['Rtail', 'Whlsl', 'BusSv', 'Comps', 'Cnstr']]
 
 
 
+
+
 #### ------------------------------------------------ PART A ------------------------------------------------ ####
 # A) 1. Graph the "mean-variance locus" (without the risk-free asset and w/o short-selling constraint) of the 5 industries. Specify each industry in the chart. 
 
@@ -60,119 +62,129 @@ ones = np.ones(n_assets)
 
 def calculate_mvp_weights(cov_matrix, allow_short_selling=False):
     """
-    Calculate Minimum Variance Portfolio (MVP) weights
-    
+    Calculate Minimum Variance Portfolio (MVP) weights using an analytical approach.
+
     Parameters:
     -----------
     cov_matrix : np.array
         Covariance matrix of asset returns
     allow_short_selling : bool, optional
         Whether to allow negative weights (default: False)
-    
+
     Returns:
     --------
     np.array: MVP weights
     """
-    if allow_short_selling == True:
-        # MVP with short-selling (quadratic programming)
-        def portfolio_variance(weights):
-            return weights.T @ cov_matrix @ weights
-        
-        # Constraints
-        constraints = [
-            {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}  # weights sum to 1
-        ]
-        
-        # Bounds (with short-selling)
-        bounds = [(-np.inf, np.inf) for _ in range(len(cov_matrix))]
-        
-        # Initial guess: equal weights
-        initial_weights = np.ones(len(cov_matrix)) / len(cov_matrix)
-        
-        # Optimization
-        result = minimize(
-            portfolio_variance, 
-            initial_weights, 
-            method='SLSQP',
-            bounds=bounds,
-            constraints=constraints
-        )
-        
-        mvp_weights = result.x
+    num_assets = cov_matrix.shape[0]
+    ones = np.ones(num_assets)
+
+    # Compute the inverse of the covariance matrix
+    inv_cov_matrix = np.linalg.inv(cov_matrix)
+
+    # Calculate MVP parameters
+    A = ones.T @ inv_cov_matrix @ ones  # Scalar value
+    B = ones.T @ inv_cov_matrix @ expected_returns
+    mvp_weights = (inv_cov_matrix @ ones) / A  # MVP weights formula
+
+    if allow_short_selling:
+        return mvp_weights
     else:
-        # MVP with no short-selling (quadratic programming)
-        def portfolio_variance(weights):
-            return weights.T @ cov_matrix @ weights
-        
-        # Constraints
-        constraints = [
-            {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}  # weights sum to 1
-        ]
-        
-        # Bounds (no short-selling)
-        bounds = [(0, np.inf) for _ in range(len(cov_matrix))]
-        
-        # Initial guess: equal weights
-        initial_weights = np.ones(len(cov_matrix)) / len(cov_matrix)
-        
+        # If short-selling is NOT allowed, use numerical optimization to enforce constraints
+        from scipy.optimize import minimize
+
+        # Constraints: sum of weights = 1
+        constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        bounds = [(0, 1) for _ in range(num_assets)]  # No short selling
+
+        # Initial guess: Equal weights
+        initial_weights = np.ones(num_assets) / num_assets
+
         # Optimization
         result = minimize(
-            portfolio_variance, 
-            initial_weights, 
+            lambda w: w.T @ cov_matrix @ w,  # Minimize portfolio variance
+            initial_weights,
             method='SLSQP',
             bounds=bounds,
             constraints=constraints
         )
-        
-        mvp_weights = result.x
+
+        if result.success:
+            return result.x
+        else:
+            raise ValueError("Optimization failed: " + result.message)
+
+def plot_efficient_frontier(returns, expected_returns, cov_matrix, mvp_weights):
+    """
+    Plot the efficient frontier with industries and MVP point
     
-    return mvp_weights
+    Parameters:
+    -----------
+    returns : pd.DataFrame
+        Returns data
+    expected_returns : pd.Series
+        Expected returns for each asset
+    cov_matrix : pd.DataFrame
+        Covariance matrix
+    mvp_weights : np.array
+        MVP portfolio weights
+    """
+    # Calculate MVP return and risk
+    mvp_return = np.dot(mvp_weights, expected_returns) 
+    mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
+        
+    # Convert to percentages for plotting
+    mvp_return_plot = mvp_return * 100
+    mvp_risk_plot = mvp_risk * 100
+    
+    plt.figure(figsize=(10, 6))
+    plt.grid(True)
+    
+    # Plot individual industries
+    for industry in expected_returns.index:
+        plt.scatter(returns[industry].std()* 100, 
+                   expected_returns[industry] * 100,
+                   marker='X', s=200, label=industry)
+    
+    # Plot MVP point
+    plt.scatter(mvp_risk_plot, mvp_return_plot, 
+               color="red", marker="*", s=200, 
+               label="Minimum Variance Portfolio")
+    
+    # Add MVP coordinates
+    plt.annotate(f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)",
+                (mvp_risk_plot, mvp_return_plot),
+                xytext=(10, 10), textcoords='offset points',
+                fontsize=8)
+    
+    # Format axes
+    plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
+    plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())
+    
+    plt.xlim(0, 10)
+    plt.ylim(-3, 3)
+    
+    # Labels and title
+    plt.xlabel("Standard Deviation (%)", fontsize=12)
+    plt.ylabel("Expected Return (%)", fontsize=12)
+    plt.title("Efficient Frontier with MVP (With Short Selling)", 
+             fontsize=15, fontweight='bold')
+    plt.legend()
+    
+    plt.savefig("efficient_frontierA1.png", bbox_inches='tight', dpi=300)
+    plt.show()
+
+# Convert percentage returns to decimal
+returns = portfolios_data / 100
+returns = returns.dropna()
+
+expected_returns = returns.mean()
+cov_matrix = returns.cov()
 
 # Calculate MVP weights
 mvp_weights = calculate_mvp_weights(cov_matrix, allow_short_selling=True)
 
-# Calculate MVP return and risk
-mvp_return = np.dot(mvp_weights, expected_returns)
-mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
-
-sharpe_ratios = mvp_return / mvp_risk  # No risk-free asset
-
-# Convert values for graphing purposes
-mvp_return_plot = mvp_return * 100
-mvp_risk_plot = mvp_risk  * 100
-expected_returns_plot = expected_returns * 100
-mvp_return_plot = mvp_return * 100
-mvp_risk_plot = mvp_risk * 100
-
-# Plot Efficient Frontier
-plt.figure(figsize=(10, 6))
-plt.grid(True)
-
-# Mark each industry
-for industry in expected_returns.index:
-    plt.scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, 
-                marker='X', s=200, label=industry)
-
-# Mark MVP
-plt.scatter(mvp_risk_plot, mvp_return_plot, color="red", marker="*", s=200, label="Minimum Variance Portfolio")
-
-# Add x and y value to the MVP point (coordinates)
-plt.text(mvp_risk_plot, mvp_return_plot, f"(r = {mvp_return_plot:.2f}%), σ = {mvp_risk_plot:.2f}%)", fontsize=8, ha='right')
-
-# Format axes as percentages
-plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
-plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())
-
-plt.xlim(0, 10)
-plt.ylim(-3, 3)
-
-# Labels and title
-plt.xlabel("Standard Deviation (%)", fontsize=12)
-plt.ylabel("Expected Return (%)", fontsize=12)
-plt.title("Efficient Frontier with MVP (With Short Selling)", fontsize=15, fontweight='bold')
-plt.legend()
-plt.savefig("efficient_frontierA1.png")
-plt.show()
+# Plot the efficient frontier
+plot_efficient_frontier(returns, expected_returns, cov_matrix, mvp_weights)
 
 
 
@@ -181,13 +193,7 @@ plt.show()
 
 # A) 2. Calculate tangency portfolio and CML (w/ risk-free rate and w/ short-selling)
 
-# Retrieve risk-free rate from Kenneth French website
-def retrieve_risk_free_rate():
-    rf_data = web.famafrench.FamaFrenchReader('F-F_Research_Data_Factors', start='2019-12', end='2024-12')
-    rf = rf_data.read()[0]['RF'] / 100  # Convert to decimal
-    return rf.mean()
-
-rf_rate = retrieve_risk_free_rate()
+rf_rate = 0.4/100
 
 inv_cov_matrix = np.linalg.inv(cov_matrix)
 
@@ -218,10 +224,10 @@ def calculate_tangency_portfolio(expected_returns, cov_matrix, rf_rate, allow_sh
     
     if allow_short_selling:
         # No constraints on weights if short selling is allowed
-        bounds = tuple((-1, 1) for _ in range(n_assets))
+        bounds = tuple((-np.inf, np.inf) for _ in range(n_assets))
     else:
         # Weights between 0 and infinity if no short selling
-        bounds = tuple((0, 1) for _ in range(n_assets))
+        bounds = tuple((0, np.inf) for _ in range(n_assets))
     
     # Initial guess: equal weights
     initial_weights = np.ones(n_assets) / n_assets
@@ -288,6 +294,7 @@ plt.legend()
 plt.grid(True)
 plt.savefig("efficient_frontier_cmlA2.png")
 plt.show()
+
 
 
 
@@ -534,9 +541,6 @@ tangency_return = tangency_portfolio['expected_return']
 tangency_risk = tangency_portfolio['risk']
 tangency_sharpe_ratio = tangency_portfolio['sharpe_ratio']
 
-# Mathematical Verification
-verification_results = verify_sharpe_maximization(expected_returns, cov_matrix, rf_rate, tangency_weights)
-
 # Detailed Output
 print("\n------ A.6 Tangency Portfolio Characteristics (W/o Short-Selling) ------")
 for asset, weight in zip(expected_returns.index, tangency_weights):
@@ -567,6 +571,8 @@ print(f"\nSum of Tangency Portfolio Weights: {np.sum(tangency_weights):.4f}")
 
 #### ------------------------------------------------ PART B ------------------------------------------------ ####
 # B) 1. Resample with replacement the porfolio data and create a bootstrap sample of 60 months. Repeat the bootstrap 1000 times. And repeat A) 1-6 for each bootstrap sample.
+# Set seed to 243
+np.random.seed(243)
 
 def bootstrap_sampling(data, n_iterations=1000, sample_size=60):
    bootstrap_samples = []
@@ -1057,6 +1063,7 @@ print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
 
 
 
+
 # B) 4. Implement MAXSER approach to portfolio allocation for the 48 industries
 # Apply shrinkage estimation to the covariance matrix
 # Retrieve 48 industry portfolios from Kenneth French website
@@ -1066,12 +1073,6 @@ def retrieve_full_industry_data():
     portfolios_data = portfolios_data.replace([-99.99, -999], pd.NA).dropna()
     industry_reader.close()
     return portfolios_data / 100  # Convert percentage to decimal
-
-# Retrieve risk-free rate
-def retrieve_risk_free_rate():
-    rf_data = web.famafrench.FamaFrenchReader('F-F_Research_Data_Factors', start='2014-12', end='2024-12')
-    rf = rf_data.read()[0]['RF'] / 100  # Convert to decimal
-    return rf.mean()
 
 def estimate_cov_matrix(returns):
     lw = LedoitWolf()
@@ -1121,7 +1122,6 @@ def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_sellin
 
 # Main execution
 portfolios_data = retrieve_full_industry_data()
-rf_rate = retrieve_risk_free_rate()
 
 # Find the best portfolios using Monte Carlo with MAXSER
 best_industries_short, best_weights_short, best_sharpe_short = monte_carlo_maxser(portfolios_data, rf_rate, 10000, True)
