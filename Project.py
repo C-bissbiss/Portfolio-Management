@@ -359,19 +359,21 @@ mvp_risk_plot = mvp_risk  * 100
 mvp_return_plot = mvp_return * 100
 mvp_risk_plot = mvp_risk * 100
 
-# Plot Efficient Frontier (with no short selling)
+# Plot Efficient Frontier (Parabola)
 plt.figure(figsize=(10, 6))
 plt.grid(True)
+
+plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier (No Short Selling)", color="red", linestyle='dashed')
 
 # Mark each industry (its own risk-return point)
 for industry in expected_returns.index:
     plt.scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, 
                 marker='X', s=200, label=industry)
 
-# Mark the MVP (for reference, even though the MVP might not be feasible under the no short-sale constraint)
-plt.scatter(mvp_risk_plot, mvp_return_plot, color="red", marker="*", s=200, label="Minimum Variance Portfolio")
+# Mark the MVP (for reference)
+plt.scatter(mvp_risk_plot, mvp_return_plot, color="blue", marker="*", s=200, label="Minimum Variance Portfolio")
 plt.text(mvp_risk_plot, mvp_return_plot, 
-         f"(r = {mvp_return_plot:.2f}%), σ = {mvp_risk_plot:.2f}%)", fontsize=8, ha='right')
+         f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)", fontsize=8, ha='right')
 
 # Format axes as percentages
 plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
@@ -392,8 +394,6 @@ plt.show()
 
 
 
-
-
 # A) 5. Graph the "mean-variance locus" (with the risk-free asset and w/ short-selling constraint) of the 5 industries. Specify each industry in the chart. 
 
 # Calculate the Tangency Portfolio
@@ -403,8 +403,17 @@ tangency_return = tangency_portfolio['expected_return']
 tangency_risk = tangency_portfolio['risk']
 tangency_sharpe_ratio = tangency_portfolio['sharpe_ratio']
 
-# Plotting the Efficient Frontier
+# ---- PLOT ---- #
 plt.figure(figsize=(10, 6))
+plt.grid(True)
+
+# Plot Efficient Frontier (Parabola)
+plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier", color="blue", linestyle='dashed')
+
+# Plot Capital Market Line (CML)
+cml_x = np.linspace(0, max(sigma_vals), 100)
+cml_y = rf_rate * 100 + tangency_sharpe_ratio * cml_x
+plt.plot(cml_x, cml_y, label="Capital Market Line (CML)", color="green", linestyle='solid')
 
 # Mark each individual industry on the plot
 for industry in expected_returns.index:
@@ -413,8 +422,6 @@ for industry in expected_returns.index:
 
 # Mark the tangency portfolio on the plot
 plt.scatter(tangency_risk * 100, tangency_return * 100, color="blue", marker="*", s=200, label="Tangency Portfolio")
-
-# Annotate the tangency portfolio point
 plt.text(tangency_risk * 100, tangency_return * 100, 
          f"(r = {tangency_return*100:.2f}%), σ = {tangency_risk*100:.2f}%)", fontsize=8, ha='right')
 
@@ -428,12 +435,10 @@ plt.ylim(-3, 3)
 # Labels and title
 plt.xlabel("Standard Deviation (%)", fontsize=12)
 plt.ylabel("Expected Return (%)", fontsize=12)
-plt.title("Tangency Portfolio (Without Short Selling)", fontsize=15, fontweight='bold')
+plt.title("Efficient Frontier & CML (No Short Selling)", fontsize=15, fontweight='bold')
 plt.legend()
-plt.grid(True)
 plt.savefig("efficient_frontier_cmlA5.png")
 plt.show()
-
 
 
 
@@ -1016,13 +1021,14 @@ print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
 # B) 4. Implement MAXSER approach to portfolio allocation for the 48 industries
 # Apply shrinkage estimation to the covariance matrix
 # Retrieve 48 industry portfolios from Kenneth French website
+# Retrieve 48 industry portfolios from Kenneth French's website
 def retrieve_full_industry_data():
     industry_reader = web.famafrench.FamaFrenchReader('48_Industry_Portfolios', start='2014-12', end='2024-12')
     portfolios_data = industry_reader.read()[0]  # First table contains the return data
-    portfolios_data = portfolios_data.replace([-99.99, -999], pd.NA).dropna()
-    industry_reader.close()
+    portfolios_data = portfolios_data.replace([-99.99, -999], np.nan).dropna()
     return portfolios_data / 100  # Convert percentage to decimal
 
+# Estimate shrinkage covariance matrix using Ledoit-Wolf
 def estimate_cov_matrix(returns):
     lw = LedoitWolf()
     return lw.fit(returns).covariance_
@@ -1031,7 +1037,7 @@ def estimate_cov_matrix(returns):
 def sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate):
     port_return = np.dot(weights, expected_returns)
     port_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-    return (port_return - rf_rate) / port_risk
+    return (port_return - rf_rate) / port_risk if port_risk > 0 else -np.inf
 
 # Monte Carlo optimization with MAXSER
 def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_selling=True):
@@ -1039,10 +1045,10 @@ def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_sellin
     best_selection = None
     best_weights = None
     
-    industries = returns.columns
+    industries = list(returns.columns)  # Ensure it's a list
     
     for _ in range(n_simulations):
-        selected_industries = random.sample(list(industries), 5)
+        selected_industries = random.sample(industries, 5)
         subset_returns = returns[selected_industries]
         expected_returns = subset_returns.mean()
         cov_matrix = estimate_cov_matrix(subset_returns)
@@ -1062,7 +1068,8 @@ def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_sellin
         # Optimize
         result = minimize(neg_sharpe, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
         
-        if result.success and -result.fun > best_sharpe:
+        # Store best result
+        if result.success and -result.fun > best_sharpe and np.all(result.x >= 0):
             best_sharpe = -result.fun
             best_selection = selected_industries
             best_weights = result.x
