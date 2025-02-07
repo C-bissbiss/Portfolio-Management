@@ -61,129 +61,59 @@ n_assets = len(expected_returns)
 ones = np.ones(n_assets)
 
 def calculate_mvp_weights(cov_matrix, allow_short_selling=False):
-    """
-    Calculate Minimum Variance Portfolio (MVP) weights using an analytical approach.
-
-    Parameters:
-    -----------
-    cov_matrix : np.array
-        Covariance matrix of asset returns
-    allow_short_selling : bool, optional
-        Whether to allow negative weights (default: False)
-
-    Returns:
-    --------
-    np.array: MVP weights
-    """
     num_assets = cov_matrix.shape[0]
     ones = np.ones(num_assets)
-
-    # Compute the inverse of the covariance matrix
     inv_cov_matrix = np.linalg.inv(cov_matrix)
-
-    # Calculate MVP parameters
-    A = ones.T @ inv_cov_matrix @ ones  # Scalar value
+    A = ones.T @ inv_cov_matrix @ ones
     B = ones.T @ inv_cov_matrix @ expected_returns
-    mvp_weights = (inv_cov_matrix @ ones) / A  # MVP weights formula
-
+    mvp_weights = (inv_cov_matrix @ ones) / A
     if allow_short_selling:
         return mvp_weights
     else:
-        # If short-selling is NOT allowed, use numerical optimization to enforce constraints
-        from scipy.optimize import minimize
-
-        # Constraints: sum of weights = 1
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
-        bounds = [(0, 1) for _ in range(num_assets)]  # No short selling
-
-        # Initial guess: Equal weights
+        bounds = [(0, 1) for _ in range(num_assets)]
         initial_weights = np.ones(num_assets) / num_assets
-
-        # Optimization
-        result = minimize(
-            lambda w: w.T @ cov_matrix @ w,  # Minimize portfolio variance
-            initial_weights,
-            method='SLSQP',
-            bounds=bounds,
-            constraints=constraints
-        )
-
+        result = minimize(lambda w: w.T @ cov_matrix @ w, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
         if result.success:
             return result.x
         else:
             raise ValueError("Optimization failed: " + result.message)
 
 def plot_efficient_frontier(returns, expected_returns, cov_matrix, mvp_weights):
-    """
-    Plot the efficient frontier with industries and MVP point
-    
-    Parameters:
-    -----------
-    returns : pd.DataFrame
-        Returns data
-    expected_returns : pd.Series
-        Expected returns for each asset
-    cov_matrix : pd.DataFrame
-        Covariance matrix
-    mvp_weights : np.array
-        MVP portfolio weights
-    """
-    # Calculate MVP return and risk
-    mvp_return = np.dot(mvp_weights, expected_returns) 
+    mvp_return = np.dot(mvp_weights, expected_returns)
     mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
-        
-    # Convert to percentages for plotting
     mvp_return_plot = mvp_return * 100
     mvp_risk_plot = mvp_risk * 100
     
+    mu_vals = np.linspace(min(expected_returns) - 0.02, max(expected_returns) + 0.04, 300)
+    ones = np.ones(len(expected_returns))
+    inv_cov = np.linalg.inv(cov_matrix)
+    A = ones.T @ inv_cov @ ones
+    B = ones.T @ inv_cov @ expected_returns
+    C = expected_returns.T @ inv_cov @ expected_returns
+    Delta = A * C - B**2
+    sigma_vals = np.sqrt(np.maximum((A * mu_vals**2 - 2 * B * mu_vals + C) / Delta, 0)) * 100
+    
     plt.figure(figsize=(10, 6))
     plt.grid(True)
+    plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier", color="blue")
     
-    # Plot individual industries
     for industry in expected_returns.index:
-        plt.scatter(returns[industry].std()* 100, 
-                   expected_returns[industry] * 100,
-                   marker='X', s=200, label=industry)
+        plt.scatter(returns[industry].std() * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
     
-    # Plot MVP point
-    plt.scatter(mvp_risk_plot, mvp_return_plot, 
-               color="red", marker="*", s=200, 
-               label="Minimum Variance Portfolio")
+    plt.scatter(mvp_risk_plot, mvp_return_plot, color="red", marker="*", s=200, label="Minimum Variance Portfolio")
+    plt.annotate(f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)", (mvp_risk_plot, mvp_return_plot), xytext=(10, 10), textcoords='offset points', fontsize=8)
     
-    # Add MVP coordinates
-    plt.annotate(f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)",
-                (mvp_risk_plot, mvp_return_plot),
-                xytext=(10, 10), textcoords='offset points',
-                fontsize=8)
-    
-    # Format axes
     plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
     plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())
-    
-    plt.xlim(0, 10)
-    plt.ylim(-3, 3)
-    
-    # Labels and title
     plt.xlabel("Standard Deviation (%)", fontsize=12)
     plt.ylabel("Expected Return (%)", fontsize=12)
-    plt.title("Efficient Frontier with MVP (With Short Selling)", 
-             fontsize=15, fontweight='bold')
+    plt.title("Efficient Frontier with MVP (With Short Selling)", fontsize=15, fontweight='bold')
     plt.legend()
-    
     plt.savefig("efficient_frontierA1.png", bbox_inches='tight', dpi=300)
     plt.show()
 
-# Convert percentage returns to decimal
-returns = portfolios_data / 100
-returns = returns.dropna()
-
-expected_returns = returns.mean()
-cov_matrix = returns.cov()
-
-# Calculate MVP weights
 mvp_weights = calculate_mvp_weights(cov_matrix, allow_short_selling=True)
-
-# Plot the efficient frontier
 plot_efficient_frontier(returns, expected_returns, cov_matrix, mvp_weights)
 
 
@@ -266,6 +196,18 @@ tangency_sharpe_ratio = tangency_portfolio['sharpe_ratio']
 # Remove the old MVP point
 plt.figure(figsize=(10, 6))
 
+# Generate efficient frontier
+mu_vals = np.linspace(min(expected_returns) - 0.02, max(expected_returns) + 0.04, 300)
+ones = np.ones(len(expected_returns))
+inv_cov = np.linalg.inv(cov_matrix)
+A = ones.T @ inv_cov @ ones
+B = ones.T @ inv_cov @ expected_returns
+C = expected_returns.T @ inv_cov @ expected_returns
+Delta = A * C - B**2
+sigma_vals = np.sqrt(np.maximum((A * mu_vals**2 - 2 * B * mu_vals + C) / Delta, 0)) * 100
+
+# Plot the Efficient Frontier (Parabola)
+plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier", color="blue", linestyle='dashed')
 
 # Mark each individual industry on the plot
 for industry in expected_returns.index:
@@ -277,7 +219,15 @@ plt.scatter(tangency_risk * 100, tangency_return * 100, color="blue", marker="*"
 
 # Annotate the tangency portfolio point
 plt.text(tangency_risk * 100, tangency_return * 100, 
-         f"(r = {tangency_return*100:.2f}%), σ = {tangency_risk*100:.2f}%)", fontsize=8, ha='right')
+         f"(r = {tangency_return*100:.2f}%, σ = {tangency_risk*100:.2f}%)", fontsize=8, ha='right')
+
+# ---- ADDING CML ---- #
+# Define the Capital Market Line (CML)
+cml_x = np.linspace(0, 10, 100)  # From risk-free to high risk
+cml_y = rf_rate * 100 + ((tangency_return - rf_rate) / tangency_risk) * cml_x
+
+# Plot the CML
+plt.plot(cml_x, cml_y, label="Capital Market Line (CML)", color="red", linestyle="solid", linewidth=2)
 
 # Format axes as percentages
 plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
@@ -289,12 +239,11 @@ plt.ylim(-3, 3)
 # Labels and title
 plt.xlabel("Standard Deviation (%)", fontsize=12)
 plt.ylabel("Expected Return (%)", fontsize=12)
-plt.title("Tangency Portfolio (With Short Selling)", fontsize=15, fontweight='bold')
+plt.title("Tangency Portfolio with Efficient Frontier & CML (With Short Selling)", fontsize=15, fontweight='bold')
 plt.legend()
 plt.grid(True)
 plt.savefig("efficient_frontier_cmlA2.png")
 plt.show()
-
 
 
 
