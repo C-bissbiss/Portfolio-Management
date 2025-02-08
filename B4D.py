@@ -141,14 +141,14 @@ def lasso_feature_selection(returns, rc, allow_short_selling=True, min_features=
             # Use Elastic Net to allow for both positive and negative correlations
             model = ElasticNetCV(
                 l1_ratio=[.1, .5, .7, .9, .95, .99, 1],
-                cv=5,
+                cv=10,
                 max_iter=50000,
                 random_state=42
             )
         else:
             # Use standard LASSO with positive constraints for long-only portfolios
             model = LassoCV(
-                cv=5,
+                cv=10,
                 max_iter=50000,
                 positive=True,  # Enforce positive coefficients
                 random_state=42
