@@ -9,6 +9,7 @@ import matplotlib.ticker as mtick
 import sympy as sp
 import random
 from sklearn.covariance import LedoitWolf
+from sklearn.linear_model import LassoCV, ElasticNetCV
 
 # Remove future warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -345,41 +346,91 @@ if np.any(tangency_weights < 0):
 
 # A) 4. Graph the "mean-variance locus" (without the risk-free asset and w/ short-selling constraint) of the 5 industries. Specify each industry in the chart. 
 
+# A) 4. Graph the "mean-variance locus" (without the risk-free asset and w/ short-selling constraint) of the 5 industries.
+
+def calculate_portfolio_metrics(weights, returns, cov_matrix):
+    portfolio_return = np.dot(weights, expected_returns)
+    portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    return portfolio_return, portfolio_risk
+
+def generate_efficient_frontier_no_short():
+    # Generate a range of target returns
+    target_returns = np.linspace(min(expected_returns), max(expected_returns), 100)
+    efficient_risks = []
+    efficient_returns = []
+    
+    for target_return in target_returns:
+        # Define the optimization problem
+        def portfolio_volatility(weights):
+            return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+        
+        # Constraints
+        constraints = [
+            {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},  # weights sum to 1
+            {'type': 'eq', 'fun': lambda x: np.dot(x, expected_returns) - target_return}  # target return
+        ]
+        
+        # Bounds (no short selling)
+        bounds = tuple((0, 1) for _ in range(len(expected_returns)))
+        
+        # Initial guess
+        initial_weights = np.ones(len(expected_returns)) / len(expected_returns)
+        
+        try:
+            # Optimize
+            result = minimize(portfolio_volatility, 
+                            initial_weights,
+                            method='SLSQP',
+                            bounds=bounds,
+                            constraints=constraints)
+            
+            if result.success:
+                efficient_risks.append(result.fun)
+                efficient_returns.append(target_return)
+        except:
+            continue
+    
+    return np.array(efficient_risks), np.array(efficient_returns)
+
 # Calculate MVP weights
 mvp_weights = calculate_mvp_weights(cov_matrix, allow_short_selling=False)
 
 # Calculate MVP return and risk
 mvp_return = np.dot(mvp_weights, expected_returns)
 mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
-sharpe_ratios = mvp_return / mvp_risk   # No risk-free asset here
 
 # Convert values for plotting (to percentages)
 mvp_return_plot = mvp_return * 100
-mvp_risk_plot = mvp_risk  * 100
-mvp_return_plot = mvp_return * 100
 mvp_risk_plot = mvp_risk * 100
 
-# Plot Efficient Frontier (Parabola)
+# Generate efficient frontier points
+ef_risks, ef_returns = generate_efficient_frontier_no_short()
+
+# Create the plot
 plt.figure(figsize=(10, 6))
 plt.grid(True)
 
-plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier (No Short Selling)", color="red", linestyle='dashed')
+# Plot the efficient frontier with dots
+plt.plot(ef_risks * 100, ef_returns * 100, label="Efficient Frontier", color="blue", linestyle='dashed')
 
-# Mark each industry (its own risk-return point)
+# Mark each industry
 for industry in expected_returns.index:
     plt.scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, 
                 marker='X', s=200, label=industry)
 
-# Mark the MVP (for reference)
-plt.scatter(mvp_risk_plot, mvp_return_plot, color="blue", marker="*", s=200, label="Minimum Variance Portfolio")
-plt.text(mvp_risk_plot, mvp_return_plot, 
-         f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)", fontsize=8, ha='right')
+# Mark the MVP
+plt.scatter(mvp_risk_plot, mvp_return_plot, color="red", marker="*", s=200, label="Minimum Variance Portfolio")
+plt.annotate(f"(r = {mvp_return_plot:.2f}%, σ = {mvp_risk_plot:.2f}%)", 
+            (mvp_risk_plot, mvp_return_plot), 
+            xytext=(10, 10), 
+            textcoords='offset points', 
+            fontsize=8)
 
 # Format axes as percentages
 plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
 plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())
 
-# Manually set axis limits to focus on the main cluster of portfolios
+# Set axis limits
 plt.xlim(0, 10)
 plt.ylim(0, 3)
 
@@ -388,7 +439,7 @@ plt.xlabel("Standard Deviation (%)", fontsize=12)
 plt.ylabel("Expected Return (%)", fontsize=12)
 plt.title("Efficient Frontier with MVP (No Short Selling)", fontsize=15, fontweight='bold')
 plt.legend()
-plt.savefig("efficient_frontierA4.png")
+plt.savefig("efficient_frontierA4.png", bbox_inches='tight', dpi=300)
 plt.show()
 
 
@@ -403,39 +454,51 @@ tangency_return = tangency_portfolio['expected_return']
 tangency_risk = tangency_portfolio['risk']
 tangency_sharpe_ratio = tangency_portfolio['sharpe_ratio']
 
-# ---- PLOT ---- #
+# Create the plot
 plt.figure(figsize=(10, 6))
 plt.grid(True)
 
 # Plot Efficient Frontier (Parabola)
 plt.plot(sigma_vals, mu_vals * 100, label="Efficient Frontier", color="blue", linestyle='dashed')
 
-# Plot Capital Market Line (CML)
-cml_x = np.linspace(0, max(sigma_vals), 100)
-cml_y = rf_rate * 100 + tangency_sharpe_ratio * cml_x
-plt.plot(cml_x, cml_y, label="Capital Market Line (CML)", color="green", linestyle='solid')
+# Add Tangency Parabola
+# Calculate points for the tangency parabola
+tangency_point = np.array([tangency_risk, tangency_return])
+parabola_points = []
+
+for t in np.linspace(0, 2, 100):  # t goes from 0 to 2 to show both sides of tangency point
+    point = t * tangency_point
+    parabola_points.append(point)
+
+parabola_points = np.array(parabola_points)
+plt.plot(parabola_points[:, 0] * 100, parabola_points[:, 1] * 100, 
+         label="Tangency Parabola", color="green", linestyle='solid')
 
 # Mark each individual industry on the plot
 for industry in expected_returns.index:
-    plt.scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, 
-                marker='X', s=200, label=industry)
+    plt.scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100,
+               marker='X', s=200, label=industry)
 
 # Mark the tangency portfolio on the plot
-plt.scatter(tangency_risk * 100, tangency_return * 100, color="blue", marker="*", s=200, label="Tangency Portfolio")
-plt.text(tangency_risk * 100, tangency_return * 100, 
-         f"(r = {tangency_return*100:.2f}%), σ = {tangency_risk*100:.2f}%)", fontsize=8, ha='right')
+plt.scatter(tangency_risk * 100, tangency_return * 100, 
+           color="blue", marker="*", s=200, label="Tangency Portfolio")
+plt.text(tangency_risk * 100, tangency_return * 100,
+         f"(r = {tangency_return*100:.2f}%, σ = {tangency_risk*100:.2f}%)", 
+         fontsize=8, ha='right')
 
 # Format axes as percentages
 plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter())
 plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())
 
+# Set plot limits
 plt.xlim(0, 10)
 plt.ylim(-3, 3)
 
 # Labels and title
 plt.xlabel("Standard Deviation (%)", fontsize=12)
 plt.ylabel("Expected Return (%)", fontsize=12)
-plt.title("Efficient Frontier & CML (No Short Selling)", fontsize=15, fontweight='bold')
+plt.title("Efficient Frontier & CML (No Short Selling))", 
+          fontsize=15, fontweight='bold')
 plt.legend()
 plt.savefig("efficient_frontier_cmlA5.png")
 plt.show()
@@ -593,7 +656,7 @@ mvp_df_without_short = results_to_dataframe(mvp_results_without_short)
 tangency_df_with_short = results_to_dataframe(tangency_results_with_short)
 tangency_df_without_short = results_to_dataframe(tangency_results_without_short)
 
-# Plotting
+# Plotting histograms of Sharpe ratios
 plt.figure(figsize=(16, 12))
 plt.subplot(2, 2, 1)
 plt.hist(mvp_df_with_short['sharpe_ratio'], bins=30, color='blue', alpha=0.7)
@@ -634,94 +697,245 @@ print("\nTangency Without Short-Selling Summary:")
 print(tangency_df_without_short.describe())
 
 
-# Make another bundle of graphs where it shows the MPV and tangency portfolio (as in A1, A2, A4, A5) 
-# from the bootstrap samples that is the most optimal
-# Function to find the most optimal portfolio based on Sharpe ratio
-def find_most_optimal_portfolio(results):
-    """
-    Find the most optimal portfolio based on the highest Sharpe ratio.
+# Find optimal bootstrap samples for each case
+def get_optimal_bootstrap_sample(bootstrap_samples, results):
+    optimal_index = max(range(len(results)), 
+                       key=lambda i: results[i]['sharpe_ratio'])
+    return bootstrap_samples[optimal_index]
+
+# Get optimal samples for all four cases
+optimal_sample_mvp_with_short = get_optimal_bootstrap_sample(bootstrap_samples, mvp_results_with_short)
+optimal_sample_mvp_without_short = get_optimal_bootstrap_sample(bootstrap_samples, mvp_results_without_short)
+optimal_sample_tangency_with_short = get_optimal_bootstrap_sample(bootstrap_samples, tangency_results_with_short)
+optimal_sample_tangency_without_short = get_optimal_bootstrap_sample(bootstrap_samples, tangency_results_without_short)
+
+def plot_bootstrapped_efficient_frontier(ax, optimal_bootstrap_sample, rf_rate, allow_short_selling=True, is_tangency=True):
+    """Modified to take an axis as parameter instead of creating a new figure"""
+    # Calculate expected returns and covariance matrix from the optimal bootstrap sample
+    expected_returns = optimal_bootstrap_sample.mean()
+    cov_matrix = optimal_bootstrap_sample.cov()
     
-    Parameters:
-    - results: List of dictionaries containing portfolio information
+    # Generate efficient frontier points
+    n_points = 300
+    weights_list = []
+    returns_list = []
+    risks_list = []
     
-    Returns:
-    - Dictionary with the most optimal portfolio details
-    """
-    optimal_portfolio = max(results, key=lambda x: x['sharpe_ratio'])
-    return optimal_portfolio
+    # Use optimization to generate efficient frontier points
+    target_returns = np.linspace(min(expected_returns), max(expected_returns), n_points)
+    
+    for target_return in target_returns:
+        try:
+            constraints = [
+                {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
+                {'type': 'eq', 'fun': lambda w: np.dot(w, expected_returns) - target_return}
+            ]
+            
+            bounds = None if allow_short_selling else [(0, 1) for _ in range(len(expected_returns))]
+            
+            result = minimize(lambda w: np.sqrt(np.dot(w.T, np.dot(cov_matrix, w))),
+                            x0=np.ones(len(expected_returns)) / len(expected_returns),
+                            method='SLSQP',
+                            bounds=bounds,
+                            constraints=constraints)
+            
+            if result.success:
+                weights_list.append(result.x)
+                returns_list.append(target_return)
+                risks_list.append(np.sqrt(np.dot(result.x.T, np.dot(cov_matrix, result.x))))
+        except:
+            continue
+    
+    # Plot the Efficient Frontier
+    ax.plot(np.array(risks_list) * 100, np.array(returns_list) * 100,
+            label="Efficient Frontier", color="blue", linestyle='dashed', alpha=0.7)
 
-# Find the most optimal portfolios
-most_optimal_mvp_with_short = find_most_optimal_portfolio(mvp_results_with_short)
-most_optimal_mvp_without_short = find_most_optimal_portfolio(mvp_results_without_short)
-most_optimal_tangency_with_short = find_most_optimal_portfolio(tangency_results_with_short)
-most_optimal_tangency_without_short = find_most_optimal_portfolio(tangency_results_without_short)
-# Create subplots for the most optimal portfolios
-fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+    # Plot individual assets
+    for industry in expected_returns.index:
+        ax.scatter(np.std(optimal_bootstrap_sample[industry]) * 100, 
+                  expected_returns[industry] * 100, 
+                  marker='X', s=200, label=industry)
+    
+    # Calculate and plot MVP
+    mvp_weights = calculate_mvp_weights(cov_matrix, allow_short_selling)
+    mvp_return = np.dot(mvp_weights, expected_returns)
+    mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
+    
+    # Calculate Tangency Portfolio
+    tangency_portfolio = calculate_tangency_portfolio(expected_returns, cov_matrix, 
+                                                    rf_rate, allow_short_selling)
+    
+    # Plot the relevant portfolio point based on is_tangency parameter
+    if is_tangency:
+        portfolio_risk = tangency_portfolio['risk'] * 100
+        portfolio_return = tangency_portfolio['expected_return'] * 100
+        ax.scatter(portfolio_risk, portfolio_return, 
+                  color='green', marker="*", s=200, label="Tangency Portfolio")
+        ax.text(portfolio_risk, portfolio_return,
+                f"\nTangency (r={portfolio_return:.2f}%, σ={portfolio_risk:.2f}%)",
+                fontsize=8, ha='left', va='bottom')
+        
+        # Plot CML for tangency portfolio
+        max_x = max(20, portfolio_risk * 1.2)
+        cml_x = np.linspace(0, max_x, 100)
+        slope = (portfolio_return - rf_rate * 100) / portfolio_risk
+        cml_y = rf_rate * 100 + slope * cml_x
+        ax.plot(cml_x, cml_y, label="Capital Market Line (CML)", 
+               color="red", linestyle="solid", linewidth=1.5, alpha=0.7)
+    else:
+        ax.scatter(mvp_risk * 100, mvp_return * 100, 
+                  color='red', marker="*", s=200, label="MVP")
+        ax.text(mvp_risk * 100, mvp_return * 100,
+                f"\nMVP (r={mvp_return*100:.2f}%, σ={mvp_risk*100:.2f}%)",
+                fontsize=8, ha='left', va='bottom')
+    
+    # Formatting
+    portfolio_type = "Tangency Portfolio" if is_tangency else "MVP"
+    title = f"Bootstrapped {portfolio_type} ({'With' if allow_short_selling else 'Without'} Short Selling)"
+    ax.set_title(title, fontsize=15, fontweight='bold')
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter())
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+    ax.set_xlim(0, 20)
+    ax.set_ylim(-10, 10)
+    ax.set_xlabel("Standard Deviation (%)", fontsize=12)
+    ax.set_ylabel("Expected Return (%)", fontsize=12)
+    ax.legend(fontsize=8)
+    ax.grid(True)
 
-# Plotting the most optimal MVP with short-selling
-axs[0, 0].set_title("Most Optimal MVP (With Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[0, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[0, 0].scatter(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (With Short Selling)")
-axs[0, 0].text(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_with_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_with_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[0, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 0].set_xlim(0, 20)
-axs[0, 0].set_ylim(-10, 10)
-axs[0, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[0, 0].set_ylabel("Expected Return (%)", fontsize=12)
-axs[0, 0].legend()
-axs[0, 0].grid(True)
+# Create one figure with 2x2 subplots
+fig, axes = plt.subplots(2, 2, figsize=(20, 16))
 
-# Plotting the most optimal MVP without short-selling
-axs[0, 1].set_title("Most Optimal MVP (Without Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[0, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[0, 1].scatter(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (Without Short Selling)")
-axs[0, 1].text(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_without_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_without_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[0, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 1].set_xlim(0, 20)
-axs[0, 1].set_ylim(-10, 10)
-axs[0, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[0, 1].set_ylabel("Expected Return (%)", fontsize=12)
-axs[0, 1].legend()
-axs[0, 1].grid(True)
+# MVP with short-selling
+plot_bootstrapped_efficient_frontier(axes[0, 0], 
+                                   optimal_sample_mvp_with_short, 
+                                   rf_rate, 
+                                   allow_short_selling=True, 
+                                   is_tangency=False)
 
-# Plotting the most optimal Tangency Portfolio with short-selling
-axs[1, 0].set_title("Most Optimal Tangency Portfolio (With Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[1, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[1, 0].scatter(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (With Short Selling)")
-axs[1, 0].text(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, f"(r = {most_optimal_tangency_with_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_with_short['risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[1, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 0].set_xlim(0, 20)
-axs[1, 0].set_ylim(-10, 10)
-axs[1, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[1, 0].set_ylabel("Expected Return (%)", fontsize=12)
-axs[1, 0].legend()
-axs[1, 0].grid(True)
+# MVP without short-selling
+plot_bootstrapped_efficient_frontier(axes[0, 1], 
+                                   optimal_sample_mvp_without_short, 
+                                   rf_rate, 
+                                   allow_short_selling=False, 
+                                   is_tangency=False)
 
-# Plotting the most optimal Tangency Portfolio without short-selling
-axs[1, 1].set_title("Most Optimal Tangency Portfolio (Without Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[1, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[1, 1].scatter(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (Without Short Selling)")
-axs[1, 1].text(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, f"(r = {most_optimal_tangency_without_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_without_short['risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[1, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 1].set_xlim(0, 20)
-axs[1, 1].set_ylim(-10, 10)
-axs[1, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[1, 1].set_ylabel("Expected Return (%)", fontsize=12)
-axs[1, 1].legend()
-axs[1, 1].grid(True)
+# Tangency with short-selling
+plot_bootstrapped_efficient_frontier(axes[1, 0], 
+                                   optimal_sample_tangency_with_short, 
+                                   rf_rate, 
+                                   allow_short_selling=True, 
+                                   is_tangency=True)
 
-# Adjust layout and save the figure
+# Tangency without short-selling
+plot_bootstrapped_efficient_frontier(axes[1, 1], 
+                                   optimal_sample_tangency_without_short, 
+                                   rf_rate, 
+                                   allow_short_selling=False, 
+                                   is_tangency=True)
+
 plt.tight_layout()
 plt.savefig("most_optimal_portfoliosB12.png")
-plt.show() 
+plt.show()
+
+def verify_tangency_portfolio_optimality(returns_data, rf_rate, allow_short_selling=True):
+    """
+    Verify that the tangency portfolio has the highest Sharpe ratio among all portfolios
+    on the efficient frontier.
+    """
+    # Calculate expected returns and covariance matrix
+    expected_returns = returns_data.mean()
+    cov_matrix = returns_data.cov()
+    
+    # Get tangency portfolio
+    tangency_portfolio = calculate_tangency_portfolio(
+        expected_returns, cov_matrix, rf_rate, allow_short_selling
+    )
+    tangency_sharpe = tangency_portfolio['sharpe_ratio']
+    
+    # Generate a large number of portfolios along the efficient frontier
+    n_points = 1000
+    target_returns = np.linspace(min(expected_returns), max(expected_returns), n_points)
+    portfolio_metrics = []
+    
+    for target_return in target_returns:
+        try:
+            constraints = [
+                {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
+                {'type': 'eq', 'fun': lambda w: np.dot(w, expected_returns) - target_return}
+            ]
+            
+            bounds = None if allow_short_selling else [(0, 1) for _ in range(len(expected_returns))]
+            
+            result = minimize(
+                lambda w: np.sqrt(np.dot(w.T, np.dot(cov_matrix, w))),
+                x0=np.ones(len(expected_returns)) / len(expected_returns),
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints
+            )
+            
+            if result.success:
+                weights = result.x
+                portfolio_return = target_return
+                portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                sharpe_ratio = (portfolio_return - rf_rate) / portfolio_risk
+                
+                portfolio_metrics.append({
+                    'return': portfolio_return,
+                    'risk': portfolio_risk,
+                    'sharpe_ratio': sharpe_ratio
+                })
+                
+        except:
+            continue
+    
+    # Convert to DataFrame for analysis
+    metrics_df = pd.DataFrame(portfolio_metrics)
+    max_sharpe_portfolio = metrics_df.loc[metrics_df['sharpe_ratio'].idxmax()]
+    
+    print(f"\nVerification Results ({'With' if allow_short_selling else 'Without'} Short-Selling):")
+    print("-" * 60)
+    print(f"Tangency Portfolio Sharpe Ratio: {tangency_sharpe:.4f}")
+    print(f"Maximum Sharpe Ratio Found on Efficient Frontier: {max_sharpe_portfolio['sharpe_ratio']:.4f}")
+    print(f"Difference: {abs(tangency_sharpe - max_sharpe_portfolio['sharpe_ratio']):.8f}")
+    
+    # Create visualization
+    plt.figure(figsize=(12, 8))
+    plt.scatter(metrics_df['risk'] * 100, metrics_df['sharpe_ratio'], 
+               alpha=0.5, label='Efficient Frontier Portfolios')
+    plt.axhline(y=tangency_sharpe, color='r', linestyle='--', 
+                label='Tangency Portfolio Sharpe Ratio')
+    plt.xlabel('Portfolio Risk (%)')
+    plt.ylabel('Sharpe Ratio')
+    plt.title(f"Sharpe Ratios Along Efficient Frontier ({'With' if allow_short_selling else 'Without'} Short-Selling)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"sharpe_ratio_verification_{'with' if allow_short_selling else 'without'}_short.png")
+    plt.show()
+    
+    return abs(tangency_sharpe - max_sharpe_portfolio['sharpe_ratio']) < 1e-4
+
+# Run verification for both short-selling scenarios using the optimal bootstrap samples
+print("\nVerifying optimality of tangency portfolios...")
+
+# With short-selling
+is_optimal_with_short = verify_tangency_portfolio_optimality(
+    optimal_sample_tangency_with_short, 
+    rf_rate, 
+    allow_short_selling=True
+)
+
+# Without short-selling
+is_optimal_without_short = verify_tangency_portfolio_optimality(
+    optimal_sample_tangency_without_short, 
+    rf_rate, 
+    allow_short_selling=False
+)
+
+print("\nOptimality Verification Summary:")
+print("-" * 40)
+print(f"Tangency Portfolio is optimal (with short-selling): {is_optimal_with_short}")
+print(f"Tangency Portfolio is optimal (without short-selling): {is_optimal_without_short}")
 
 
 
@@ -748,41 +962,172 @@ mvp_results_without_short = []
 tangency_results_with_short = []
 tangency_results_without_short = []
 
+def calculate_mvp_weights_cardinality(cov_matrix, allow_short_selling=True, max_assets=3):
+    """Calculate MVP weights with cardinality constraint using binary variables"""
+    n_assets = len(cov_matrix)
+    
+    def objective(params):
+        weights = params[:n_assets]
+        return np.sqrt(weights.T @ cov_matrix @ weights)
+    
+    # Initial guess: Equal weights in top 3 assets by variance
+    variances = np.diag(cov_matrix)
+    top_3_indices = np.argsort(variances)[:3]
+    x0 = np.zeros(n_assets)
+    x0[top_3_indices] = 1/3
+    
+    # Constraints
+    constraints = [
+        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}  # Sum of weights = 1
+    ]
+    
+    # Bounds for weights
+    if allow_short_selling:
+        bounds = [(-np.inf, np.inf) for _ in range(n_assets)]
+    else:
+        bounds = [(0, 1) for _ in range(n_assets)]
+    
+    # Add cardinality constraint through penalty in objective function
+    def penalized_objective(x):
+        portfolio_risk = objective(x)
+        # Count number of non-zero weights (using a small threshold)
+        active_positions = np.sum(np.abs(x) > 1e-4)
+        if active_positions > max_assets:
+            return portfolio_risk + 1000 * (active_positions - max_assets)
+        return portfolio_risk
+    
+    # Optimize
+    result = minimize(penalized_objective, x0, method='SLSQP', bounds=bounds, constraints=constraints)
+    
+    # Clean up small weights
+    weights = result.x
+    weights[np.abs(weights) < 1e-4] = 0
+    
+    # Normalize weights to ensure they sum to 1
+    weights = weights / np.sum(weights)
+    
+    return weights
+
+def calculate_tangency_portfolio_cardinality_improved(expected_returns, cov_matrix, rf_rate, allow_short_selling=True, max_assets=3, n_starts=10):
+    """Calculate tangency portfolio weights with improved cardinality constraint handling"""
+    n_assets = len(cov_matrix)
+    best_result = None
+    best_sharpe = -np.inf
+    
+    def sharpe_ratio(params):
+        weights = params[:n_assets]
+        portfolio_return = np.dot(weights, expected_returns)
+        portfolio_risk = np.sqrt(weights.T @ cov_matrix @ weights)
+        return -(portfolio_return - rf_rate) / portfolio_risk  # Negative because we minimize
+    
+    # Define stronger penalty function
+    def penalized_sharpe_ratio(x):
+        sr = sharpe_ratio(x)
+        active_positions = np.sum(np.abs(x) > 1e-4)
+        if active_positions > max_assets:
+            return sr + 10000 * (active_positions - max_assets)**2  # Quadratic penalty
+        return sr
+    
+    # Bounds for weights with limited short-selling
+    if allow_short_selling:
+        bounds = [(-2, 2) for _ in range(n_assets)]  # Limit short positions to -200%
+    else:
+        bounds = [(0, 1) for _ in range(n_assets)]
+    
+    # Constraints
+    constraints = [
+        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}  # Sum of weights = 1
+    ]
+    
+    # Multi-start optimization
+    for _ in range(n_starts):
+        # Generate different initial guesses
+        if _ == 0:
+            # First try: Top assets by Sharpe ratio
+            individual_sharpe = (expected_returns - rf_rate) / np.sqrt(np.diag(cov_matrix))
+            top_indices = np.argsort(-individual_sharpe)[:max_assets]
+            x0 = np.zeros(n_assets)
+            x0[top_indices] = 1/max_assets
+        else:
+            # Random initialization with preference for positive weights
+            x0 = np.random.uniform(-0.5, 1.5, n_assets)
+            x0 = x0 / np.sum(np.abs(x0))  # Normalize
+        
+        try:
+            result = minimize(
+                penalized_sharpe_ratio,
+                x0,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints,
+                options={'maxiter': 1000}
+            )
+            
+            if result.success:
+                weights = result.x
+                # Clean up small weights
+                weights[np.abs(weights) < 1e-4] = 0
+                if np.sum(np.abs(weights) > 1e-4) <= max_assets:  # Check cardinality constraint
+                    weights = weights / np.sum(weights)  # Renormalize
+                    portfolio_return = np.dot(weights, expected_returns)
+                    portfolio_risk = np.sqrt(weights.T @ cov_matrix @ weights)
+                    sharpe = (portfolio_return - rf_rate) / portfolio_risk
+                    
+                    if sharpe > best_sharpe:
+                        best_sharpe = sharpe
+                        best_result = {
+                            'weights': weights,
+                            'expected_return': portfolio_return,
+                            'risk': portfolio_risk,
+                            'sharpe_ratio': sharpe
+                        }
+        except:
+            continue
+    
+    if best_result is None:
+        raise ValueError("Failed to find valid solution")
+    
+    return best_result
+
 # Loop through each bootstrap sample
 for sample in bootstrap_samples:
-   # Calculate expected returns and covariance matrix
-   expected_returns = sample.mean()
-   cov_matrix = sample.cov()
-   
-   # MVP with short-selling
-   mvp_weights_with_short = calculate_mvp_weights(cov_matrix, allow_short_selling=True)
-   mvp_return_with_short = np.dot(mvp_weights_with_short, expected_returns)
-   mvp_risk_with_short = np.sqrt(mvp_weights_with_short.T @ cov_matrix @ mvp_weights_with_short)
-   mvp_results_with_short.append({
-       'mvp_weights': mvp_weights_with_short,
-       'mvp_return': mvp_return_with_short,
-       'mvp_risk': mvp_risk_with_short,
-       'sharpe_ratio': (mvp_return_with_short - rf_rate) / mvp_risk_with_short
-   })
-   
-   # MVP without short-selling
-   mvp_weights_without_short = calculate_mvp_weights(cov_matrix, allow_short_selling=False)
-   mvp_return_without_short = np.dot(mvp_weights_without_short, expected_returns)
-   mvp_risk_without_short = np.sqrt(mvp_weights_without_short.T @ cov_matrix @ mvp_weights_without_short)
-   mvp_results_without_short.append({
-       'mvp_weights': mvp_weights_without_short,
-       'mvp_return': mvp_return_without_short,
-       'mvp_risk': mvp_risk_without_short,
-       'sharpe_ratio': (mvp_return_without_short - rf_rate) / mvp_risk_without_short
-   })
-   
-   # Tangency with short-selling
-   tangency_portfolio_with_short = calculate_tangency_portfolio(expected_returns, cov_matrix, rf_rate, allow_short_selling=True)
-   tangency_results_with_short.append(tangency_portfolio_with_short)
-   
-   # Tangency without short-selling
-   tangency_portfolio_without_short = calculate_tangency_portfolio(expected_returns, cov_matrix, rf_rate, allow_short_selling=False)
-   tangency_results_without_short.append(tangency_portfolio_without_short)
+    expected_returns = sample.mean()
+    cov_matrix = sample.cov()
+    
+    try:
+        # MVP with short-selling (should be updated to use cardinality constraint)
+        mvp_weights_with_short = calculate_mvp_weights_cardinality(cov_matrix, allow_short_selling=True, max_assets=3)
+        mvp_return_with_short = np.dot(mvp_weights_with_short, expected_returns)
+        mvp_risk_with_short = np.sqrt(mvp_weights_with_short.T @ cov_matrix @ mvp_weights_with_short)
+        mvp_results_with_short.append({
+            'mvp_weights': mvp_weights_with_short,
+            'mvp_return': mvp_return_with_short,
+            'mvp_risk': mvp_risk_with_short,
+            'sharpe_ratio': (mvp_return_with_short - rf_rate) / mvp_risk_with_short
+        })
+        
+        # MVP without short-selling
+        mvp_weights_without_short = calculate_mvp_weights_cardinality(cov_matrix, allow_short_selling=False, max_assets=3)
+        mvp_return_without_short = np.dot(mvp_weights_without_short, expected_returns)
+        mvp_risk_without_short = np.sqrt(mvp_weights_without_short.T @ cov_matrix @ mvp_weights_without_short)
+        mvp_results_without_short.append({
+            'mvp_weights': mvp_weights_without_short,
+            'mvp_return': mvp_return_without_short,
+            'mvp_risk': mvp_risk_without_short,
+            'sharpe_ratio': (mvp_return_without_short - rf_rate) / mvp_risk_without_short
+        })
+        
+        # Tangency with short-selling (using improved function)
+        tangency_portfolio_with_short = calculate_tangency_portfolio_cardinality_improved(
+            expected_returns, cov_matrix, rf_rate, allow_short_selling=True, max_assets=3)
+        tangency_results_with_short.append(tangency_portfolio_with_short)
+        
+        # Tangency without short-selling (using improved function)
+        tangency_portfolio_without_short = calculate_tangency_portfolio_cardinality_improved(
+            expected_returns, cov_matrix, rf_rate, allow_short_selling=False, max_assets=3)
+        tangency_results_without_short.append(tangency_portfolio_without_short)
+    except:
+        continue
 
 # Convert results to DataFrames
 def results_to_dataframe(results):
@@ -797,7 +1142,7 @@ mvp_df_without_short = results_to_dataframe(mvp_results_without_short)
 tangency_df_with_short = results_to_dataframe(tangency_results_with_short)
 tangency_df_without_short = results_to_dataframe(tangency_results_without_short)
 
-# Plotting
+# Plotting histograms of Sharpe ratios
 plt.figure(figsize=(16, 12))
 plt.subplot(2, 2, 1)
 plt.hist(mvp_df_with_short['sharpe_ratio'], bins=30, color='blue', alpha=0.7)
@@ -838,95 +1183,273 @@ print("\nTangency Without Short-Selling Summary:")
 print(tangency_df_without_short.describe())
 
 
-# Make another bundle of graphs where it shows the MPV and tangency portfolio (as in A1, A2, A4, A5) 
-# from the bootstrap samples that is the most optimal
-# Function to find the most optimal portfolio based on Sharpe ratio
-def find_most_optimal_portfolio(results):
-    """
-    Find the most optimal portfolio based on the highest Sharpe ratio.
+# Find optimal bootstrap samples for each case
+def get_optimal_bootstrap_sample(bootstrap_samples, results):
+    optimal_index = max(range(len(results)), 
+                       key=lambda i: results[i]['sharpe_ratio'])
+    return bootstrap_samples[optimal_index]
+
+# Get optimal samples for all four cases
+optimal_sample_mvp_with_short = get_optimal_bootstrap_sample(bootstrap_samples, mvp_results_with_short)
+optimal_sample_mvp_without_short = get_optimal_bootstrap_sample(bootstrap_samples, mvp_results_without_short)
+optimal_sample_tangency_with_short = get_optimal_bootstrap_sample(bootstrap_samples, tangency_results_with_short)
+optimal_sample_tangency_without_short = get_optimal_bootstrap_sample(bootstrap_samples, tangency_results_without_short)
+
+def plot_bootstrapped_efficient_frontier(ax, optimal_bootstrap_sample, rf_rate, allow_short_selling=True, is_tangency=True):
+    """Modified to take an axis as parameter instead of creating a new figure"""
+    # Calculate expected returns and covariance matrix from the optimal bootstrap sample
+    expected_returns = optimal_bootstrap_sample.mean()
+    cov_matrix = optimal_bootstrap_sample.cov()
     
-    Parameters:
-    - results: List of dictionaries containing portfolio information
+    # Generate efficient frontier points
+    n_points = 300
+    weights_list = []
+    returns_list = []
+    risks_list = []
     
-    Returns:
-    - Dictionary with the most optimal portfolio details
-    """
-    optimal_portfolio = max(results, key=lambda x: x['sharpe_ratio'])
-    return optimal_portfolio
+    # Use optimization to generate efficient frontier points
+    target_returns = np.linspace(min(expected_returns), max(expected_returns), n_points)
+    
+    for target_return in target_returns:
+        try:
+            constraints = [
+                {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
+                {'type': 'eq', 'fun': lambda w: np.dot(w, expected_returns) - target_return}
+            ]
+            
+            bounds = [(-2, 2) if allow_short_selling else (0, 1) for _ in range(len(expected_returns))]
+            
+            result = minimize(lambda w: np.sqrt(np.dot(w.T, np.dot(cov_matrix, w))),
+                            x0=np.ones(len(expected_returns)) / len(expected_returns),
+                            method='SLSQP',
+                            bounds=bounds,
+                            constraints=constraints)
+            
+            if result.success:
+                weights_list.append(result.x)
+                returns_list.append(target_return)
+                risks_list.append(np.sqrt(np.dot(result.x.T, np.dot(cov_matrix, result.x))))
+        except:
+            continue
+    
+    # Plot the Efficient Frontier
+    ax.plot(np.array(risks_list) * 100, np.array(returns_list) * 100,
+            label="Efficient Frontier", color="blue", linestyle='dashed', alpha=0.7)
 
-# Find the most optimal portfolios
-most_optimal_mvp_with_short = find_most_optimal_portfolio(mvp_results_with_short)
-most_optimal_mvp_without_short = find_most_optimal_portfolio(mvp_results_without_short)
-most_optimal_tangency_with_short = find_most_optimal_portfolio(tangency_results_with_short)
-most_optimal_tangency_without_short = find_most_optimal_portfolio(tangency_results_without_short)
-# Create subplots for the most optimal portfolios
-fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+    # Plot individual assets
+    for industry in expected_returns.index:
+        ax.scatter(np.std(optimal_bootstrap_sample[industry]) * 100, 
+                  expected_returns[industry] * 100, 
+                  marker='X', s=200, label=industry)
+    
+    # Calculate and plot MVP
+    mvp_weights = calculate_mvp_weights(cov_matrix, allow_short_selling)
+    mvp_return = np.dot(mvp_weights, expected_returns)
+    mvp_risk = np.sqrt(mvp_weights.T @ cov_matrix @ mvp_weights)
+    
+    # Calculate Tangency Portfolio
+    tangency_portfolio = calculate_tangency_portfolio(expected_returns, cov_matrix, 
+                                                    rf_rate, allow_short_selling)
+    
+    # Plot the relevant portfolio point based on is_tangency parameter
+    if is_tangency:
+        portfolio_risk = tangency_portfolio['risk'] * 100
+        portfolio_return = tangency_portfolio['expected_return'] * 100
+        ax.scatter(portfolio_risk, portfolio_return, 
+                  color='green', marker="*", s=200, label="Tangency Portfolio")
+        ax.text(portfolio_risk, portfolio_return,
+                f"\nTangency (r={portfolio_return:.2f}%, σ={portfolio_risk:.2f}%)",
+                fontsize=8, ha='left', va='bottom')
+        
+        # Plot CML for tangency portfolio
+        max_x = max(20, portfolio_risk * 1.2)
+        cml_x = np.linspace(0, max_x, 100)
+        slope = (portfolio_return - rf_rate * 100) / portfolio_risk
+        cml_y = rf_rate * 100 + slope * cml_x
+        ax.plot(cml_x, cml_y, label="Capital Market Line (CML)", 
+               color="red", linestyle="solid", linewidth=1.5, alpha=0.7)
+    else:
+        ax.scatter(mvp_risk * 100, mvp_return * 100, 
+                  color='red', marker="*", s=200, label="MVP")
+        ax.text(mvp_risk * 100, mvp_return * 100,
+                f"\nMVP (r={mvp_return*100:.2f}%, σ={mvp_risk*100:.2f}%)",
+                fontsize=8, ha='left', va='bottom')
+    
+    # Formatting
+    portfolio_type = "Tangency Portfolio" if is_tangency else "MVP"
+    title = f"Bootstrapped {portfolio_type} ({'With' if allow_short_selling else 'Without'} Short Selling)"
+    ax.set_title(title, fontsize=15, fontweight='bold')
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter())
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+    ax.set_xlim(0, 20)
+    ax.set_ylim(-10, 10)
+    ax.set_xlabel("Standard Deviation (%)", fontsize=12)
+    ax.set_ylabel("Expected Return (%)", fontsize=12)
+    ax.legend(fontsize=8)
+    ax.grid(True)
 
-# Plotting the most optimal MVP with short-selling
-axs[0, 0].set_title("Most Optimal MVP (With Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[0, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[0, 0].scatter(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (With Short Selling)")
-axs[0, 0].text(most_optimal_mvp_with_short['mvp_risk'] * 100, most_optimal_mvp_with_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_with_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_with_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[0, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 0].set_xlim(0, 20)
-axs[0, 0].set_ylim(-10, 10)
-axs[0, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[0, 0].set_ylabel("Expected Return (%)", fontsize=12)
-axs[0, 0].legend()
-axs[0, 0].grid(True)
+# Create one figure with 2x2 subplots
+fig, axes = plt.subplots(2, 2, figsize=(20, 16))
 
-# Plotting the most optimal MVP without short-selling
-axs[0, 1].set_title("Most Optimal MVP (Without Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[0, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[0, 1].scatter(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, color="red", marker="*", s=200, label="Most Optimal MVP (Without Short Selling)")
-axs[0, 1].text(most_optimal_mvp_without_short['mvp_risk'] * 100, most_optimal_mvp_without_short['mvp_return'] * 100, f"(r = {most_optimal_mvp_without_short['mvp_return']*100:.2f}%), σ = {most_optimal_mvp_without_short['mvp_risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[0, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[0, 1].set_xlim(0, 20)
-axs[0, 1].set_ylim(-10, 10)
-axs[0, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[0, 1].set_ylabel("Expected Return (%)", fontsize=12)
-axs[0, 1].legend()
-axs[0, 1].grid(True)
+# MVP with short-selling
+plot_bootstrapped_efficient_frontier(axes[0, 0], 
+                                   optimal_sample_mvp_with_short, 
+                                   rf_rate, 
+                                   allow_short_selling=True, 
+                                   is_tangency=False)
 
-# Plotting the most optimal Tangency Portfolio with short-selling
-axs[1, 0].set_title("Most Optimal Tangency Portfolio (With Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[1, 0].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[1, 0].scatter(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (With Short Selling)")
-axs[1, 0].text(most_optimal_tangency_with_short['risk'] * 100, most_optimal_tangency_with_short['expected_return'] * 100, f"(r = {most_optimal_tangency_with_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_with_short['risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[1, 0].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 0].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 0].set_xlim(0, 20)
-axs[1, 0].set_ylim(-10, 10)
-axs[1, 0].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[1, 0].set_ylabel("Expected Return (%)", fontsize=12)
-axs[1, 0].legend()
-axs[1, 0].grid(True)
+# MVP without short-selling
+plot_bootstrapped_efficient_frontier(axes[0, 1], 
+                                   optimal_sample_mvp_without_short, 
+                                   rf_rate, 
+                                   allow_short_selling=False, 
+                                   is_tangency=False)
 
-# Plotting the most optimal Tangency Portfolio without short-selling
-axs[1, 1].set_title("Most Optimal Tangency Portfolio (Without Short Selling)", fontsize=15, fontweight='bold')
-for industry in expected_returns.index:
-    axs[1, 1].scatter(np.std(returns[industry]) * 100, expected_returns[industry] * 100, marker='X', s=200, label=industry)
-axs[1, 1].scatter(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, color="blue", marker="*", s=200, label="Most Optimal Tangency Portfolio (Without Short Selling)")
-axs[1, 1].text(most_optimal_tangency_without_short['risk'] * 100, most_optimal_tangency_without_short['expected_return'] * 100, f"(r = {most_optimal_tangency_without_short['expected_return']*100:.2f}%), σ = {most_optimal_tangency_without_short['risk']*100:.2f}%)", fontsize=8, ha='right')
-axs[1, 1].xaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 1].yaxis.set_major_formatter(mtick.PercentFormatter())
-axs[1, 1].set_xlim(0, 20)
-axs[1, 1].set_ylim(-10, 10)
-axs[1, 1].set_xlabel("Standard Deviation (%)", fontsize=12)
-axs[1, 1].set_ylabel("Expected Return (%)", fontsize=12)
-axs[1, 1].legend()
-axs[1, 1].grid(True)
+# Tangency with short-selling
+plot_bootstrapped_efficient_frontier(axes[1, 0], 
+                                   optimal_sample_tangency_with_short, 
+                                   rf_rate, 
+                                   allow_short_selling=True, 
+                                   is_tangency=True)
 
-# Adjust layout and save the figure
+# Tangency without short-selling
+plot_bootstrapped_efficient_frontier(axes[1, 1], 
+                                   optimal_sample_tangency_without_short, 
+                                   rf_rate, 
+                                   allow_short_selling=False, 
+                                   is_tangency=True)
+
 plt.tight_layout()
 plt.savefig("most_optimal_portfoliosB22.png")
-plt.show() 
+plt.show()
 
+def verify_tangency_portfolio_optimality_cardinality_improved(returns_data, rf_rate, allow_short_selling=True, max_assets=3):
+    """Improved verification with better optimization parameters"""
+    expected_returns = returns_data.mean()
+    cov_matrix = returns_data.cov()
+    
+    # Get tangency portfolio with improved calculation
+    tangency_portfolio = calculate_tangency_portfolio_cardinality_improved(
+        expected_returns, cov_matrix, rf_rate, allow_short_selling, max_assets
+    )
+    tangency_sharpe = tangency_portfolio['sharpe_ratio']
+    
+    # Generate portfolios along the efficient frontier with improved parameters
+    n_points = 1000
+    target_returns = np.linspace(min(expected_returns), max(expected_returns), n_points)
+    portfolio_metrics = []
+    
+    for target_return in target_returns:
+        try:
+            n_assets = len(cov_matrix)
+            
+            def objective(weights):
+                portfolio_risk = np.sqrt(weights.T @ cov_matrix @ weights)
+                active_positions = np.sum(np.abs(weights) > 1e-4)
+                if active_positions > max_assets:
+                    return portfolio_risk + 10000 * (active_positions - max_assets)**2
+                return portfolio_risk
+            
+            constraints = [
+                {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
+                {'type': 'eq', 'fun': lambda w: np.dot(w, expected_returns) - target_return}
+            ]
+            
+            bounds = [(-2, 2) if allow_short_selling else (0, 1) for _ in range(n_assets)]
+            
+            # Try multiple starting points
+            best_result = None
+            best_risk = np.inf
+            
+            for _ in range(5):  # Multiple starts for each target return
+                if _ == 0:
+                    # First try: Equal weights in top assets
+                    top_indices = np.argsort(-expected_returns)[:max_assets]
+                    x0 = np.zeros(n_assets)
+                    x0[top_indices] = 1/max_assets
+                else:
+                    x0 = np.random.uniform(-0.5 if allow_short_selling else 0,
+                                         1.5 if allow_short_selling else 1,
+                                         n_assets)
+                    x0 = x0 / np.sum(np.abs(x0))
+                
+                result = minimize(objective, x0, method='SLSQP',
+                                bounds=bounds, constraints=constraints,
+                                options={'maxiter': 1000})
+                
+                if result.success and (best_result is None or result.fun < best_risk):
+                    best_result = result
+                    best_risk = result.fun
+            
+            if best_result is not None:
+                weights = best_result.x
+                weights[np.abs(weights) < 1e-4] = 0
+                weights = weights / np.sum(weights)
+                
+                if np.sum(np.abs(weights) > 1e-4) <= max_assets:
+                    portfolio_return = np.dot(weights, expected_returns)
+                    portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                    sharpe_ratio = (portfolio_return - rf_rate) / portfolio_risk
+                    
+                    portfolio_metrics.append({
+                        'return': portfolio_return,
+                        'risk': portfolio_risk,
+                        'sharpe_ratio': sharpe_ratio
+                    })
+        except:
+            continue
+    
+    metrics_df = pd.DataFrame(portfolio_metrics)
+    if len(metrics_df) == 0:
+        return False
+        
+    max_sharpe_portfolio = metrics_df.loc[metrics_df['sharpe_ratio'].idxmax()]
+    
+    # Print detailed results
+    print(f"\nVerification Results ({'With' if allow_short_selling else 'Without'} Short-Selling):")
+    print("-" * 60)
+    print(f"Tangency Portfolio Sharpe Ratio: {tangency_sharpe:.6f}")
+    print(f"Maximum Sharpe Ratio Found on Efficient Frontier: {max_sharpe_portfolio['sharpe_ratio']:.6f}")
+    print(f"Difference: {abs(tangency_sharpe - max_sharpe_portfolio['sharpe_ratio']):.8f}")
+    
+    # Visualization
+    plt.figure(figsize=(12, 8))
+    plt.scatter(metrics_df['risk'] * 100, metrics_df['sharpe_ratio'],
+                alpha=0.5, label='Efficient Frontier Portfolios (Max 3 Assets)')
+    plt.axhline(y=tangency_sharpe, color='r', linestyle='--',
+                label='Tangency Portfolio Sharpe Ratio')
+    plt.xlabel('Portfolio Risk (%)')
+    plt.ylabel('Sharpe Ratio')
+    plt.title(f"Sharpe Ratios Along Efficient Frontier with Max 3 Assets\n({'With' if allow_short_selling else 'Without'} Short-Selling)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"improved_sharpe_ratio_verification_{'with' if allow_short_selling else 'without'}_short.png")
+    plt.show()
+    
+    return abs(tangency_sharpe - max_sharpe_portfolio['sharpe_ratio']) < 1e-4
+
+# Run verification for both short-selling scenarios using the optimal bootstrap samples
+print("\nVerifying optimality of cardinality-constrained tangency portfolios...")
+
+# Test with the optimal bootstrap samples
+is_optimal_with_short = verify_tangency_portfolio_optimality_cardinality_improved(
+    optimal_sample_tangency_with_short, 
+    rf_rate, 
+    allow_short_selling=True,
+    max_assets=3
+)
+
+is_optimal_without_short = verify_tangency_portfolio_optimality_cardinality_improved(
+    optimal_sample_tangency_without_short, 
+    rf_rate, 
+    allow_short_selling=False,
+    max_assets=3
+)
+
+print("\nOptimality Verification Summary:")
+print("-" * 40)
+print(f"Cardinality-Constrained Tangency Portfolio is optimal (with short-selling): {is_optimal_with_short}")
+print(f"Cardinality-Constrained Tangency Portfolio is optimal (without short-selling): {is_optimal_without_short}")
 
 
 
@@ -1022,72 +1545,146 @@ print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
 # Apply shrinkage estimation to the covariance matrix
 # Retrieve 48 industry portfolios from Kenneth French website
 # Retrieve 48 industry portfolios from Kenneth French's website
-def retrieve_full_industry_data():
-    industry_reader = web.famafrench.FamaFrenchReader('48_Industry_Portfolios', start='2014-12', end='2024-12')
-    portfolios_data = industry_reader.read()[0]  # First table contains the return data
-    portfolios_data = portfolios_data.replace([-99.99, -999], np.nan).dropna()
-    return portfolios_data / 100  # Convert percentage to decimal
+import numpy as np
+import pandas as pd
+from pandas_datareader.famafrench import FamaFrenchReader
+from sklearn.covariance import LedoitWolf
+from typing import Tuple
+import warnings
 
-# Estimate shrinkage covariance matrix using Ledoit-Wolf
-def estimate_cov_matrix(returns):
+def retrieve_industry_data(start_date='2014-12', end_date='2024-11'):
+    """Retrieve and clean industry return data"""
+    try:
+        ff_data = FamaFrenchReader('48_Industry_Portfolios', start=start_date, end=end_date).read()[0]
+        cleaned_data = ff_data.replace([-99.99, -999], np.nan).dropna() / 100
+        return cleaned_data
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve industry data: {str(e)}")
+
+def get_ledoit_wolf_estimates(returns: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute Ledoit-Wolf shrinkage estimates for mean and covariance
+    """
+    T, N = returns.shape
+    
+    # Ledoit-Wolf shrinkage for covariance
     lw = LedoitWolf()
-    return lw.fit(returns).covariance_
-
-# Calculate portfolio Sharpe ratio
-def sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate):
-    port_return = np.dot(weights, expected_returns)
-    port_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-    return (port_return - rf_rate) / port_risk if port_risk > 0 else -np.inf
-
-# Monte Carlo optimization with MAXSER
-def monte_carlo_maxser(returns, rf_rate, n_simulations=10000, allow_short_selling=True):
-    best_sharpe = -np.inf
-    best_selection = None
-    best_weights = None
+    shrunk_cov = lw.fit(returns).covariance_
     
-    industries = list(returns.columns)  # Ensure it's a list
+    # Simple shrinkage for mean returns
+    shrinkage_factor = min(0.9, (N + 2)/(2 * T))
+    shrunk_mean = returns.mean() * (1 - shrinkage_factor)
     
-    for _ in range(n_simulations):
-        selected_industries = random.sample(industries, 5)
-        subset_returns = returns[selected_industries]
-        expected_returns = subset_returns.mean()
-        cov_matrix = estimate_cov_matrix(subset_returns)
-        n_assets = len(expected_returns)
-        
-        # Objective function (negative Sharpe ratio to minimize)
-        def neg_sharpe(weights):
-            return -sharpe_ratio(weights, expected_returns, cov_matrix, rf_rate)
-        
-        # Constraints and bounds
-        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-        bounds = [(-1, 1) if allow_short_selling else (0, 1) for _ in range(n_assets)]
-        
-        # Initial weights
-        initial_weights = np.ones(n_assets) / n_assets
-        
-        # Optimize
-        result = minimize(neg_sharpe, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
-        
-        # Store best result
-        if result.success and -result.fun > best_sharpe and np.all(result.x >= 0):
-            best_sharpe = -result.fun
-            best_selection = selected_industries
-            best_weights = result.x
+    return shrunk_mean, shrunk_cov
+
+def optimize_with_short(returns: pd.DataFrame, target_risk: float = 0.15) -> Tuple[pd.Series, dict]:
+    """
+    Optimize portfolio with short-selling using Ledoit-Wolf shrinkage
+    """
+    T, N = returns.shape
+    if T < 2 * N:
+        warnings.warn(f"Sample size {T} may be insufficient for {N} assets")
     
-    return best_selection, best_weights, best_sharpe
+    # Get shrinkage estimates
+    shrunk_mean, shrunk_cov = get_ledoit_wolf_estimates(returns)
+    
+    # Compute optimal weights
+    try:
+        inv_cov = np.linalg.inv(shrunk_cov)
+    except np.linalg.LinAlgError:
+        inv_cov = np.linalg.pinv(shrunk_cov)
+        warnings.warn("Using pseudo-inverse due to singular covariance matrix")
+    
+    # Compute efficient portfolio weights
+    weights = inv_cov @ shrunk_mean
+    weights = weights / np.sum(np.abs(weights))  # Normalize
+    
+    # Scale to target risk
+    port_vol = np.sqrt(weights @ shrunk_cov @ weights)
+    weights = weights * (target_risk / port_vol)
+    
+    final_weights = pd.Series(weights, index=returns.columns)
+    
+    # Compute metrics
+    metrics = {
+        'expected_return': final_weights @ shrunk_mean,
+        'realized_risk': np.sqrt(final_weights @ shrunk_cov @ final_weights),
+        'sharpe_ratio': (final_weights @ shrunk_mean) / np.sqrt(final_weights @ shrunk_cov @ final_weights),
+        'long_exposure': np.sum(np.maximum(weights, 0)),
+        'short_exposure': abs(np.sum(np.minimum(weights, 0))),
+        'active_positions': np.sum(np.abs(weights) > 1e-4)
+    }
+    
+    return final_weights, metrics
 
-# Main execution
-portfolios_data = retrieve_full_industry_data()
+def optimize_no_short(returns: pd.DataFrame, target_risk: float = 0.15) -> Tuple[pd.Series, dict]:
+    """
+    Optimize portfolio without short-selling using Ledoit-Wolf shrinkage
+    """
+    T, N = returns.shape
+    if T < 2 * N:
+        warnings.warn(f"Sample size {T} may be insufficient for {N} assets")
+    
+    # Get shrinkage estimates
+    shrunk_mean, shrunk_cov = get_ledoit_wolf_estimates(returns)
+    
+    # Compute initial weights based on relative Sharpe ratios
+    vols = np.sqrt(np.diag(shrunk_cov))
+    sharpe_ratios = shrunk_mean / vols
+    
+    # Only consider assets with positive Sharpe ratios
+    positive_sharpe_mask = sharpe_ratios > 0
+    weights = np.zeros(N)
+    
+    if np.sum(positive_sharpe_mask) > 0:
+        weights[positive_sharpe_mask] = sharpe_ratios[positive_sharpe_mask]
+        weights = weights / np.sum(weights)  # Normalize
+        
+        # Scale to target risk
+        port_vol = np.sqrt(weights @ shrunk_cov @ weights)
+        weights = weights * (target_risk / port_vol)
+    else:
+        warnings.warn("No positive Sharpe ratios found, defaulting to equal weights")
+        weights = np.ones(N) / N
+    
+    final_weights = pd.Series(weights, index=returns.columns)
+    
+    # Compute metrics
+    metrics = {
+        'expected_return': final_weights @ shrunk_mean,
+        'realized_risk': np.sqrt(final_weights @ shrunk_cov @ final_weights),
+        'sharpe_ratio': (final_weights @ shrunk_mean) / np.sqrt(final_weights @ shrunk_cov @ final_weights),
+        'max_weight': np.max(weights),
+        'active_positions': np.sum(weights > 1e-4)
+    }
+    
+    return final_weights, metrics
 
-# Find the best portfolios using Monte Carlo with MAXSER
-best_industries_short, best_weights_short, best_sharpe_short = monte_carlo_maxser(portfolios_data, rf_rate, 10000, True)
-best_industries_noshort, best_weights_noshort, best_sharpe_noshort = monte_carlo_maxser(portfolios_data, rf_rate, 10000, False)
-
-# Display results
-print("Best Portfolio With Short Selling (MAXSER):")
-print(dict(zip(best_industries_short, best_weights_short)))
-print(f"Sharpe Ratio: {best_sharpe_short:.4f}\n")
-
-print("Best Portfolio Without Short Selling (MAXSER):")
-print(dict(zip(best_industries_noshort, best_weights_noshort)))
-print(f"Sharpe Ratio: {best_sharpe_noshort:.4f}\n")
+if __name__ == "__main__":
+    # Get data
+    returns = retrieve_industry_data()
+    
+    # Run both optimizations
+    print("Optimizing portfolios...")
+    weights_short, metrics_short = optimize_with_short(returns)
+    weights_no_short, metrics_no_short = optimize_no_short(returns)
+    
+    # Print results for short-selling portfolio
+    print("\nPortfolio with Short-Selling:")
+    print("Metrics:")
+    for key, value in metrics_short.items():
+        print(f"{key}: {value:.4f}")
+    
+    print("\nTop 5 Long Positions:")
+    print(weights_short[weights_short > 0].sort_values(ascending=False).head())
+    print("\nTop 5 Short Positions:")
+    print(weights_short[weights_short < 0].sort_values().head())
+    
+    # Print results for long-only portfolio
+    print("\nLong-Only Portfolio:")
+    print("Metrics:")
+    for key, value in metrics_no_short.items():
+        print(f"{key}: {value:.4f}")
+    
+    print("\nTop 5 Positions:")
+    print(weights_no_short[weights_no_short > 0].sort_values(ascending=False).head())
