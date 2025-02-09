@@ -1,3 +1,18 @@
+# Charles Bisson (11287096) 
+
+# Samuel Cayo (11345510) 
+
+# Anne-Herty Génard (11352454)  
+
+# Jérémy Laganière (11306941) 
+
+# Paulin Malet (11291667) 
+
+# In the context of portfolio management for the submission of the TP1
+
+
+
+
 # Import all packages for the project
 import pandas as pd
 import numpy as np
@@ -9,7 +24,6 @@ import matplotlib.ticker as mtick
 import sympy as sp
 import random
 from sklearn.covariance import LedoitWolf
-from sklearn.linear_model import LassoCV, ElasticNetCV
 
 # Remove future warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -445,6 +459,9 @@ plt.show()
 
 
 
+
+
+
 # A) 5. Graph the "mean-variance locus" (with the risk-free asset and w/ short-selling constraint) of the 5 industries. Specify each industry in the chart. 
 
 # Calculate the Tangency Portfolio
@@ -502,6 +519,9 @@ plt.title("Efficient Frontier & CML (No Short Selling))",
 plt.legend()
 plt.savefig("efficient_frontier_cmlA5.png")
 plt.show()
+
+
+
 
 
 
